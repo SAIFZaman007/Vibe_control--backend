@@ -1,29 +1,36 @@
 """
-Database layer.
-
-Uses SQLAlchemy 2.0 with SQLite by default. The session dependency
-(`get_db`) is injected into every route that needs database access, ensuring
-sessions are always opened and closed correctly.
+Database layer supporting both SQLite (dev) and Async PostgreSQL/asyncpg (prod).
 """
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from typing import AsyncGenerator
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-# `check_same_thread` is only needed for SQLite because it is used across the
-# threads FastAPI spawns. Postgres/MySQL do not need this argument.
+# Handle SQLite connect args if running locally
 connect_args = (
     {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
 )
 
-engine = create_engine(
+# Use create_async_engine for asyncpg / async SQLite
+engine = create_async_engine(
     settings.DATABASE_URL,
     connect_args=connect_args,
-    pool_pre_ping=True,  # gracefully recover dropped connections in production
+    pool_pre_ping=True,  # Gracefully recover dropped connections
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Async session factory
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+)
 
 
 class Base(DeclarativeBase):
@@ -32,23 +39,20 @@ class Base(DeclarativeBase):
     pass
 
 
-def get_db():
-    """FastAPI dependency that yields a database session and always closes it."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI async dependency yielding a database session."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 
 
-def init_db() -> None:
+async def init_db() -> None:
     """
-    Create all tables. Called on application startup.
-
-    For a real production system you would replace this with Alembic
-    migrations; for an MVP / SQLite setup, create_all is clean and sufficient.
+    Create all tables asynchronously on application startup.
     """
-    # Import models so they are registered on the metadata before create_all.
     from app import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
