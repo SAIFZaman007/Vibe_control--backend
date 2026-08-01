@@ -1,28 +1,26 @@
 # syntax=docker/dockerfile:1
-# ---- Vibe Control backend (FastAPI + uv) ----
 FROM python:3.12-slim AS base
 
-# System deps for Pillow/numpy wheels are already present in slim; add curl for uv.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Install uv (fast Python package manager).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
 WORKDIR /app
 
-# Install dependencies first (better layer caching).
-COPY pyproject.toml ./
-# Add `--extra ai` here if you want the TensorFlow engine baked into the image.
-RUN uv pip install --system --no-cache -r <(uv pip compile pyproject.toml 2>/dev/null || echo "") \
-    || uv pip install --system --no-cache \
-       fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-       email-validator python-multipart pyjwt bcrypt pillow numpy
+# Copy uv binary directly
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy the application code.
+# Copy dependency files first for optimal layer caching
+COPY pyproject.toml ./
+# Copy uv.lock if you have one, or comment out if you don't
+# COPY uv.lock ./ 
+
+# Install dependencies into system Python directly from pyproject.toml
+RUN uv pip install --system --no-cache -r pyproject.toml
+
+# Copy application source code
 COPY app ./app
 
-# Create runtime dirs.
+# Create required runtime directories
 RUN mkdir -p uploads outputs
 
 EXPOSE 8000
