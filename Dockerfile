@@ -9,12 +9,10 @@ WORKDIR /app
 # Copy uv binary directly
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Copy dependency files first for optimal layer caching
+# Copy dependency definition
 COPY pyproject.toml ./
-# Copy uv.lock if you have one, or comment out if you don't
-# COPY uv.lock ./ 
 
-# Install dependencies into system Python directly from pyproject.toml
+# Install dependencies into system Python directly
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application source code
@@ -24,4 +22,6 @@ COPY app ./app
 RUN mkdir -p uploads outputs
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Execute uvicorn via python module invocation to avoid path issues
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
