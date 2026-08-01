@@ -24,10 +24,12 @@ engine = create_async_engine(
     pool_pre_ping=True,  # Gracefully recover dropped connections
 )
 
-# Async session factory
+# Async session factory.
+# NOTE: `autocommit` was removed in SQLAlchemy 2.0 — sessions never autocommit,
+# so we simply don't pass it. `expire_on_commit=False` keeps ORM objects usable
+# after commit (important when returning them from a request handler).
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
-    autocommit=False,
     autoflush=False,
     expire_on_commit=False,
 )

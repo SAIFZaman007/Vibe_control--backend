@@ -1,14 +1,14 @@
 """
-Reusable FastAPI dependencies for authentication and authorization.
+Reusable FastAPI dependencies for authentication and authorization (async).
 
 `get_current_user` decodes the bearer token and loads the matching user.
-`get_current_admin` layers a role check on top — this is the natural extension
-point for the custom auth / permissions system.
+`get_current_admin` layers a role check on top — the natural extension point for
+the custom auth / permissions system.
 """
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.database import get_db
@@ -18,8 +18,8 @@ from app.models.user import User
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+async def get_current_user(
+    token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -31,7 +31,7 @@ def get_current_user(
     if user_id is None:
         raise credentials_exception
 
-    user = db.get(User, int(user_id))
+    user = await db.get(User, int(user_id))
     if user is None:
         raise credentials_exception
     if not user.is_active:
@@ -41,7 +41,7 @@ def get_current_user(
     return user
 
 
-def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required"

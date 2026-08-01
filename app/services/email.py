@@ -37,26 +37,26 @@ def _send(to: str, subject: str, html_body: str, text_body: str) -> None:
     logger.info("Sent email to %s (%s)", to, subject)
 
 
-def send_verification_email(to: str, full_name: str, token: str) -> None:
-    verify_url = f"{settings.FRONTEND_URL}/verify-email?token={token}"
-    subject = "Verify your Vibe Control account"
+def send_otp_email(to: str, full_name: str, code: str) -> None:
+    """Email a 6-digit signup verification code."""
+    minutes = settings.OTP_EXPIRE_MINUTES
+    subject = f"Your Vibe Control code: {code}"
     text_body = (
         f"Hi {full_name},\n\n"
-        f"Welcome to Vibe Control! Confirm your email to activate your account:\n"
-        f"{verify_url}\n\n"
-        f"If you didn't sign up, you can ignore this message."
+        f"Your Vibe Control verification code is: {code}\n\n"
+        f"It expires in {minutes} minutes. If you didn't sign up, ignore this email."
     )
+    # Spaced digits render nicely and are easy to read/copy.
+    spaced = " ".join(code)
     html_body = f"""\
-    <div style="font-family:system-ui,Arial,sans-serif;max-width:480px;margin:auto">
-      <h2 style="color:#111">Welcome to Vibe Control</h2>
-      <p>Hi {full_name}, confirm your email to start creating.</p>
-      <p style="margin:28px 0">
-        <a href="{verify_url}"
-           style="background:#6d28d9;color:#fff;padding:12px 22px;border-radius:10px;
-                  text-decoration:none;font-weight:600">Verify email</a>
-      </p>
-      <p style="color:#666;font-size:13px">
-        Or paste this link into your browser:<br>{verify_url}
+    <div style="font-family:system-ui,Arial,sans-serif;max-width:480px;margin:auto;color:#14121A">
+      <h2 style="margin:0 0 4px">Verify your email</h2>
+      <p style="color:#6B7280;margin:0 0 24px">Hi {full_name}, enter this code to activate your account.</p>
+      <div style="font-size:34px;font-weight:800;letter-spacing:10px;
+                  background:#F7F7F8;border:1px solid #E7E7EA;border-radius:14px;
+                  padding:20px;text-align:center;color:#7C3AED">{spaced}</div>
+      <p style="color:#6B7280;font-size:13px;margin-top:20px">
+        This code expires in {minutes} minutes. If you didn't request it, you can safely ignore this email.
       </p>
     </div>"""
     _send(to, subject, html_body, text_body)

@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # --- Database ---
-    # SQLite by default. Swappable to Postgres/MySQL later by changing this URL only.
-    DATABASE_URL: str = "sqlite:///./vibe_control.db"
+    # Async by default. Local dev uses aiosqlite; production uses asyncpg (Postgres).
+    #   local: sqlite+aiosqlite:///./vibe_control.db
+    #   prod:  postgresql+asyncpg://USER:PASS@HOST:5432/DB
+    DATABASE_URL: str = "sqlite+aiosqlite:///./vibe_control.db"
 
     # --- Security / JWT ---
     # Generate a strong secret with:  python -c "import secrets; print(secrets.token_urlsafe(64))"
@@ -29,6 +31,12 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+
+    # --- Email OTP (signup verification) ---
+    OTP_LENGTH: int = 6
+    OTP_EXPIRE_MINUTES: int = 10  # code validity window
+    OTP_MAX_ATTEMPTS: int = 5  # wrong tries before the code is invalidated
+    OTP_RESEND_COOLDOWN_SECONDS: int = 60  # min gap between "resend code" requests
 
     # --- CORS ---
     # Comma-separated list of allowed origins for the browser frontend.

@@ -1,31 +1,55 @@
 """
-Authentication routes: registration, login (JWT), and email verification.
+Authentication routes (async): registration + 6-digit OTP email verification.
 
-The design keeps auth logic isolated and thin so the client's planned "custom
-authentication system" (roles, org accounts, OAuth, etc.) can extend it cleanly.
+Signup flow
+-----------
+1. POST /api/auth/register        -> creates an (unverified) account, emails a code
+2. POST /api/auth/verify-otp      -> checks the code, verifies the account, returns a JWT
+3. POST /api/auth/resend-otp      -> re-sends a code (rate-limited)
+
+Login requires a verified email. Because access tokens are only issued after
+verification, any bearer token in the system belongs to a verified user.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
 from app.database import get_db
 from app.models.user import User
+from app.schemas.otp import MessageResponse, OTPResend, OTPVerify, RegisterResponse
 from app.schemas.token import Token
-from app.schemas.user import UserCreate, UserPublic
-from app.services import email as email_service
+from app.schemas.user import UserCreate
+from app.services import otp as otp_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == payload.email.lower()).first()
+async def _get_user_by_email(db: AsyncSession, email: str) -> User | None:
+    result = await db.execute(select(User).where(User.email == email.lower()))
+    return result.scalar_one_or_none()
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    existing = await _get_user_by_email(db, payload.email)
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+        if existing.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists.",
+            )
+        # Unverified re-registration: resend a code (respecting the cooldown) so
+        # the user isn't stuck, without creating a duplicate account.
+        try:
+            await otp_service.resend_otp(db, existing)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                raise
+        return RegisterResponse(
+            message="We sent a verification code to your email.", email=existing.email
         )
 
     user = User(
@@ -34,27 +58,54 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         hashed_password=security.hash_password(payload.password),
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
-    # Fire off a verification email (logged to console when EMAIL_ENABLED is False).
-    token = security.create_email_verification_token(user.id)
-    email_service.send_verification_email(user.email, user.full_name, token)
+    # Generate + email the OTP.
+    await otp_service.issue_otp(db, user)
 
-    return user
+    return RegisterResponse(
+        message="We sent a verification code to your email.", email=user.email
+    )
+
+
+@router.post("/verify-otp", response_model=Token)
+async def verify_otp(payload: OTPVerify, db: AsyncSession = Depends(get_db)):
+    user = await _get_user_by_email(db, payload.email)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Account not found."
+        )
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already verified. Please log in.",
+        )
+
+    # Raises with a clear message on any failure; marks the user verified on success.
+    await otp_service.verify_user_otp(db, user, payload.code.strip())
+
+    # Auto-login: return an access token now that the account is verified.
+    return Token(access_token=security.create_access_token(user.id))
+
+
+@router.post("/resend-otp", response_model=MessageResponse)
+async def resend_otp(payload: OTPResend, db: AsyncSession = Depends(get_db)):
+    user = await _get_user_by_email(db, payload.email)
+    # Don't reveal whether the email exists; respond the same either way.
+    if user is None or user.is_verified:
+        return MessageResponse(message="If that account needs verification, a code has been sent.")
+    await otp_service.resend_otp(db, user)
+    return MessageResponse(message="A new verification code has been sent.")
 
 
 @router.post("/login", response_model=Token)
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    OAuth2 password flow. `username` field carries the email.
-
-    Using the standard form makes the interactive /docs "Authorize" button work
-    out of the box.
-    """
-    user = db.query(User).filter(User.email == form_data.username.lower()).first()
+    """OAuth2 password flow. `username` carries the email."""
+    user = await _get_user_by_email(db, form_data.username)
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -65,24 +116,11 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled."
         )
-
-    access_token = security.create_access_token(user.id)
-    return Token(access_token=access_token)
-
-
-@router.post("/verify-email", response_model=UserPublic)
-def verify_email(token: str, db: Session = Depends(get_db)):
-    user_id = security.decode_token(token, expected_purpose="email_verify")
-    if user_id is None:
+    if not user.is_verified:
+        # 403 with a stable, machine-readable detail the frontend routes on.
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification link.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="EMAIL_NOT_VERIFIED",
         )
-    user = db.get(User, int(user_id))
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
-    user.is_verified = True
-    db.commit()
-    db.refresh(user)
-    return user
+    return Token(access_token=security.create_access_token(user.id))

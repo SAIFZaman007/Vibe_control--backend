@@ -7,6 +7,7 @@ small and self-contained so the "custom authentication system" the client
 reserved space for can be built on top of it without surprises.
 """
 
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -31,6 +32,28 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return bcrypt.checkpw(
             plain_password.encode("utf-8"), hashed_password.encode("utf-8")
         )
+    except (ValueError, TypeError):
+        return False
+
+
+# --- One-time passcodes (OTP) ----------------------------------------------
+
+
+def generate_otp_code(length: int | None = None) -> str:
+    """Cryptographically-secure numeric OTP, zero-padded (e.g. '042317')."""
+    n = length or settings.OTP_LENGTH
+    upper = 10**n
+    return str(secrets.randbelow(upper)).zfill(n)
+
+
+def hash_otp(code: str) -> str:
+    """Hash an OTP so the plaintext code is never stored (only emailed)."""
+    return bcrypt.hashpw(code.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_otp(code: str, hashed_code: str) -> bool:
+    try:
+        return bcrypt.checkpw(code.encode("utf-8"), hashed_code.encode("utf-8"))
     except (ValueError, TypeError):
         return False
 

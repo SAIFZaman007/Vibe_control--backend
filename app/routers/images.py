@@ -1,5 +1,5 @@
 """
-Image routes — the core product surface.
+Image routes (async) — the core product surface.
 
   GET  /api/styles                    list available style presets
   POST /api/images/stylize            upload an image + apply a style (AI)
@@ -16,7 +16,8 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.database import get_db
@@ -41,7 +42,7 @@ def _to_public(img: ProcessedImage) -> dict:
 
 
 @router.get("/styles", response_model=list[StylePreset])
-def list_styles():
+async def list_styles():
     """Public list of the artistic vibes a user can apply."""
     return style_catalog.get_presets_public()
 
@@ -57,7 +58,7 @@ async def stylize(
     title: str = Form("Untitled"),
     custom_style: UploadFile | None = File(None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Apply a style to an uploaded image.
@@ -110,50 +111,49 @@ async def stylize(
         output_filename=output_filename,
     )
     db.add(record)
-    db.commit()
-    db.refresh(record)
+    await db.commit()
+    await db.refresh(record)
     return _to_public(record)
 
 
 @router.get("/images", response_model=list[ProcessedImagePublic])
-def list_images(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+async def list_images(
+    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    images = (
-        db.query(ProcessedImage)
-        .filter(ProcessedImage.owner_id == current_user.id)
+    result = await db.execute(
+        select(ProcessedImage)
+        .where(ProcessedImage.owner_id == current_user.id)
         .order_by(ProcessedImage.created_at.desc())
-        .all()
     )
-    return [_to_public(i) for i in images]
+    return [_to_public(i) for i in result.scalars().all()]
 
 
-def _get_owned(image_id: int, user: User, db: Session) -> ProcessedImage:
-    img = db.get(ProcessedImage, image_id)
+async def _get_owned(image_id: int, user: User, db: AsyncSession) -> ProcessedImage:
+    img = await db.get(ProcessedImage, image_id)
     if img is None or img.owner_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found.")
     return img
 
 
 @router.get("/images/{image_id}", response_model=ProcessedImagePublic)
-def get_image(
+async def get_image(
     image_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    return _to_public(_get_owned(image_id, current_user, db))
+    return _to_public(await _get_owned(image_id, current_user, db))
 
 
 @router.get("/images/{image_id}/file")
-def get_image_file(
+async def get_image_file(
     image_id: int,
     variant: Literal["original", "output"] = "output",
     download: bool = False,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Stream the original or stylized file. Ownership is enforced here."""
-    img = _get_owned(image_id, current_user, db)
+    img = await _get_owned(image_id, current_user, db)
     if variant == "original":
         path = storage.upload_path(img.original_filename)
     else:
@@ -171,13 +171,13 @@ def get_image_file(
 
 
 @router.delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_image(
+async def delete_image(
     image_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    img = _get_owned(image_id, current_user, db)
+    img = await _get_owned(image_id, current_user, db)
     storage.safe_remove(storage.upload_path(img.original_filename))
     storage.safe_remove(storage.output_path(img.output_filename))
-    db.delete(img)
-    db.commit()
+    await db.delete(img)
+    await db.commit()
