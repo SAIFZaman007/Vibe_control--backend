@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# uv
+.uv/
+
+# Env & secrets
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# User content (do not commit)
+uploads/*
+outputs/*
+!uploads/.gitkeep
+!outputs/.gitkeep
+
+# Generated style assets (regenerated on startup)
+app/styles/*.jpg
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

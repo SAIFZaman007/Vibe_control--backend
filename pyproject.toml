@@ -1,0 +1,42 @@
+[project]
+name = "vibe-control-backend"
+version = "1.0.0"
+description = "Vibe Control — AI style-transfer studio backend (FastAPI)"
+readme = "README.md"
+requires-python = ">=3.11, <3.12"  # Restrict to Python 3.11 to avoid 3.12 TF macOS resolution issues
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "email-validator>=2.2",
+    "python-multipart>=0.0.12",
+    "pyjwt>=2.9",
+    "bcrypt>=4.2",
+    "pillow>=11.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+ai = [
+    "tensorflow>=2.16.0; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    "tensorflow-macos>=2.16.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "tensorflow-hub>=0.16",
+]
+paid = ["replicate>=1.0"]
+
+[dependency-groups]
+dev = ["ruff>=0.6", "httpx>=0.27", "pytest>=8.3"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
