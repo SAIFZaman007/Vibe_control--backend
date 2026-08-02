@@ -12,13 +12,16 @@ Files are streamed through ownership-checked endpoints rather than served as
 open static assets, so one user can never read another user's images.
 """
 
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.deps import get_current_user
 from app.database import get_db
 from app.models.image import ProcessedImage
@@ -26,8 +29,25 @@ from app.models.user import User
 from app.schemas.image import ProcessedImagePublic, StylePreset
 from app.services import storage, style_catalog
 from app.services.style_transfer import stylize_to_file
+from app.services.video_transfer import VideoProcessingError, stylize_video_to_file
 
 router = APIRouter(prefix="/api", tags=["images"])
+
+# Map stored-file extensions to how we serve them and whether they're video.
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm"}
+_MEDIA_TYPE_BY_SUFFIX = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+}
+
+
+def _is_video_filename(name: str) -> bool:
+    return Path(name).suffix.lower() in _VIDEO_SUFFIXES
 
 
 def _to_public(img: ProcessedImage) -> dict:
@@ -37,6 +57,7 @@ def _to_public(img: ProcessedImage) -> dict:
         "style_key": img.style_key,
         "original_url": f"/api/images/{img.id}/file?variant=original",
         "output_url": f"/api/images/{img.id}/file?variant=output",
+        "media_type": "video" if _is_video_filename(img.output_filename) else "image",
         "created_at": img.created_at,
     }
 
@@ -61,10 +82,12 @@ async def stylize(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Apply a style to an uploaded image.
+    Apply a style to an uploaded image **or video**.
 
-    Provide either a preset `style_key`, or `style_key="custom"` together with a
-    `custom_style` image to transfer an arbitrary style you upload.
+    The same endpoint accepts an image or a video in `image`. A video is stylized
+    frame-by-frame with the same engine and returned as a new video; an image is
+    returned as a new image. Provide either a preset `style_key`, or
+    `style_key="custom"` with a `custom_style` image to transfer an uploaded style.
     """
     using_custom = style_key == "custom"
     if not using_custom and style_key not in style_catalog.PRESET_KEYS:
@@ -77,32 +100,62 @@ async def stylize(
             detail="A custom style requires a custom_style image.",
         )
 
-    # 1. Persist the content image.
-    original_filename = await storage.save_upload(image, storage.UPLOAD_DIR)
+    is_video = storage.is_video_upload(image)
+    if is_video and not settings.VIDEO_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Video uploads are currently disabled.",
+        )
 
-    # 2. Persist the custom style image if provided.
+    # 1. Persist the uploaded content (image or video).
+    if is_video:
+        original_filename = await storage.save_video_upload(image, storage.UPLOAD_DIR)
+    else:
+        original_filename = await storage.save_upload(image, storage.UPLOAD_DIR)
+
+    # 2. Persist the custom style image if provided (a style is always an image).
     custom_style_path = None
     if using_custom:
         custom_name = await storage.save_upload(custom_style, storage.UPLOAD_DIR)
         custom_style_path = storage.upload_path(custom_name)
 
-    # 3. Run style transfer -> output file.
-    output_filename = storage.new_output_name()
-    try:
-        stylize_to_file(
-            content_path=storage.upload_path(original_filename),
-            output_path=storage.output_path(output_filename),
-            style_key=style_key,
-            custom_style_path=custom_style_path,
-        )
-    except Exception:
-        storage.safe_remove(storage.upload_path(original_filename))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Style transfer failed. Please try a different image.",
-        )
+    # 3. Run style transfer -> output file (video is CPU-heavy, so off the event loop).
+    if is_video:
+        output_filename = storage.new_video_output_name()
+        try:
+            await run_in_threadpool(
+                stylize_video_to_file,
+                storage.upload_path(original_filename),
+                storage.output_path(output_filename),
+                style_key,
+                custom_style_path,
+            )
+        except VideoProcessingError as exc:
+            storage.safe_remove(storage.upload_path(original_filename))
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except Exception:
+            storage.safe_remove(storage.upload_path(original_filename))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Video processing failed. Please try a different clip.",
+            )
+    else:
+        output_filename = storage.new_output_name()
+        try:
+            stylize_to_file(
+                content_path=storage.upload_path(original_filename),
+                output_path=storage.output_path(output_filename),
+                style_key=style_key,
+                custom_style_path=custom_style_path,
+            )
+        except Exception:
+            storage.safe_remove(storage.upload_path(original_filename))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Style transfer failed. Please try a different image.",
+            )
 
-    # 4. Record the job.
+    # 4. Record the job (same model + fields for images and videos).
     record = ProcessedImage(
         owner_id=current_user.id,
         title=(title or "Untitled").strip()[:160],
@@ -162,10 +215,12 @@ async def get_image_file(
     if not path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File missing.")
 
-    filename = f"vibe-control-{img.style_key}-{img.id}.jpg" if download else None
+    suffix = path.suffix.lower()
+    media_type = _MEDIA_TYPE_BY_SUFFIX.get(suffix, "application/octet-stream")
+    filename = f"vibe-control-{img.style_key}-{img.id}{suffix}" if download else None
     return FileResponse(
         path,
-        media_type="image/jpeg",
+        media_type=media_type,
         filename=filename,  # setting filename adds Content-Disposition: attachment
     )
 

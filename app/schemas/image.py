@@ -1,6 +1,7 @@
 """Schemas for style presets and processed-image records."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,4 +23,5 @@ class ProcessedImagePublic(BaseModel):
     style_key: str
     original_url: str
     output_url: str
+    media_type: Literal["image", "video"]
     created_at: datetime

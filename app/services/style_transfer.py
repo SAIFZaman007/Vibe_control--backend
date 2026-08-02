@@ -199,3 +199,27 @@ def stylize_to_file(
         result = _pillow_stylize(content, style_key)
 
     result.save(output_path, "JPEG", quality=92)
+
+
+def stylize_pil(
+    content: Image.Image,
+    style_key: str,
+    style_img: Image.Image | None = None,
+) -> Image.Image:
+    """
+    Stylize a single in-memory frame and return a new image.
+
+    This is the per-frame primitive used by the video pipeline. It reuses the same
+    engine selection as `stylize_to_file` (tfhub with Pillow fallback) but works
+    entirely in memory and never raises — a single bad frame degrades to the Pillow
+    look instead of failing the whole video. The Replicate engine is intentionally
+    not used per-frame (a paid API call per frame would be slow and costly); videos
+    run on the local, open-source tfhub/pillow path.
+    """
+    engine = settings.STYLE_ENGINE.lower()
+    try:
+        if engine == "tfhub" and style_img is not None and _ensure_tf() is not None:
+            return _tfhub_stylize(content, style_img)
+    except Exception as exc:
+        logger.warning("Per-frame tfhub failed (%s); using Pillow for this frame.", exc)
+    return _pillow_stylize(content, style_key)

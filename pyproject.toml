@@ -17,8 +17,10 @@ dependencies = [
     "bcrypt>=4.2",
     "pillow>=11.0",
     "numpy>=1.26",
-    "asyncpg>=0.30",     # async PostgreSQL driver (production)
-    "aiosqlite>=0.20",   # async SQLite driver (local development)
+    "asyncpg>=0.30",         # async PostgreSQL driver (production)
+    "aiosqlite>=0.20",       # async SQLite driver (local development)
+    "imageio>=2.34",         # video decode/encode
+    "imageio-ffmpeg>=0.5",   # bundles the ffmpeg binary (no system install needed)
 ]
 
 [project.optional-dependencies]

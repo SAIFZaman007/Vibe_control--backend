@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     STYLE_OUTPUT_MAX_DIM: int = 1024  # cap output size for speed/memory
     REPLICATE_API_TOKEN: str = ""  # only needed if STYLE_ENGINE == "replicate"
 
+    # --- Video style-transfer ---
+    # Videos are stylized frame-by-frame with the SAME engine as images, then
+    # re-encoded. ffmpeg ships inside the imageio-ffmpeg wheel (no system install).
+    VIDEO_ENABLED: bool = True
+    ALLOWED_VIDEO_TYPES: str = "video/mp4,video/quicktime,video/webm"
+    MAX_VIDEO_UPLOAD_MB: int = 50
+    MAX_VIDEO_SECONDS: int = 15  # reject clips longer than this (keeps jobs quick)
+    VIDEO_OUTPUT_MAX_DIM: int = 720  # cap frame size — video is far heavier than a photo
+    VIDEO_OUTPUT_FPS_CAP: int = 24  # subsample frames above this to bound work
+
     # --- SMTP / email ---
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
@@ -81,6 +91,10 @@ class Settings(BaseSettings):
     @property
     def allowed_image_types(self) -> List[str]:
         return [t.strip() for t in self.ALLOWED_IMAGE_TYPES.split(",") if t.strip()]
+
+    @property
+    def allowed_video_types(self) -> List[str]:
+        return [t.strip() for t in self.ALLOWED_VIDEO_TYPES.split(",") if t.strip()]
 
     @field_validator("SECRET_KEY")
     @classmethod
