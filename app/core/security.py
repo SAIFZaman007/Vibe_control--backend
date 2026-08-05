@@ -1,10 +1,5 @@
 """
-Security primitives: password hashing and JWT handling.
-
-We use `bcrypt` directly (rather than passlib) to avoid version-compatibility
-issues, and `PyJWT` for signing/verifying tokens. This module is intentionally
-small and self-contained so the "custom authentication system" the client
-reserved space for can be built on top of it without surprises.
+Security primitives : password hashing and JWT handling.
 """
 
 import secrets
@@ -17,7 +12,6 @@ import jwt
 from app.config import settings
 
 # --- Password hashing -------------------------------------------------------
-
 
 def hash_password(plain_password: str) -> str:
     """Hash a plaintext password with a per-password random salt."""
@@ -37,7 +31,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 # --- One-time passcodes (OTP) ----------------------------------------------
-
 
 def generate_otp_code(length: int | None = None) -> str:
     """Cryptographically-secure numeric OTP, zero-padded (e.g. '042317')."""
@@ -60,7 +53,6 @@ def verify_otp(code: str, hashed_code: str) -> bool:
 
 # --- JSON Web Tokens --------------------------------------------------------
 
-
 def _create_token(subject: str, expires_delta: timedelta, purpose: str) -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
@@ -71,7 +63,6 @@ def _create_token(subject: str, expires_delta: timedelta, purpose: str) -> str:
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-
 def create_access_token(subject: str | int) -> str:
     return _create_token(
         str(subject),
@@ -79,14 +70,12 @@ def create_access_token(subject: str | int) -> str:
         purpose="access",
     )
 
-
 def create_email_verification_token(subject: str | int) -> str:
     return _create_token(
         str(subject),
         timedelta(minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES),
         purpose="email_verify",
     )
-
 
 def decode_token(token: str, expected_purpose: str) -> str | None:
     """Return the token subject if valid and of the expected purpose, else None."""

@@ -1,4 +1,6 @@
-"""Schemas for favorite (bookmarked) style filters."""
+"""
+Schemas for favorite (bookmarked) style filters.
+"""
 
 from datetime import datetime
 

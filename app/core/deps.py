@@ -1,9 +1,5 @@
 """
 Reusable FastAPI dependencies for authentication and authorization (async).
-
-`get_current_user` decodes the bearer token and loads the matching user.
-`get_current_admin` layers a role check on top — the natural extension point for
-the custom auth / permissions system.
 """
 
 from fastapi import Depends, HTTPException, status
@@ -14,7 +10,7 @@ from app.core.security import decode_token
 from app.database import get_db
 from app.models.user import User
 
-# tokenUrl is only used by the interactive docs "Authorize" button.
+# TokenUrl is only used by the interactive docs "Authorize" button.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 

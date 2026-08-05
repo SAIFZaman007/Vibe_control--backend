@@ -1,4 +1,6 @@
-"""FavoriteFilter model — lets a user bookmark style presets they like."""
+"""
+FavoriteFilter model — lets a user bookmark style presets they like.
+"""
 
 from datetime import datetime
 
@@ -7,10 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
-
 class FavoriteFilter(Base):
     __tablename__ = "favorite_filters"
-    # A user cannot favorite the same style twice.
+    # An user cannot favorite the same style twice.
     __table_args__ = (UniqueConstraint("owner_id", "style_key", name="uq_owner_style"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

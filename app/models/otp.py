@@ -1,4 +1,6 @@
-"""EmailOTP model — stores a hashed, expiring signup verification code per user."""
+"""
+EmailOTP model — stores a hashed, expiring signup verification code per user.
+"""
 
 from datetime import datetime
 

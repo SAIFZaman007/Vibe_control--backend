@@ -1,10 +1,11 @@
-"""Schemas for style presets and processed-image records."""
+"""
+Schemas for style presets and processed-image records.
+"""
 
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
-
 
 class StylePreset(BaseModel):
     """A selectable artistic style shown in the frontend gallery."""
@@ -13,7 +14,6 @@ class StylePreset(BaseModel):
     name: str
     description: str
     thumbnail_url: str
-
 
 class ProcessedImagePublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)

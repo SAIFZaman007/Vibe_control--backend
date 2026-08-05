@@ -1,10 +1,5 @@
 """
 Email service (SMTP).
-
-Uses Python's built-in `smtplib` — no third-party dependency required. When
-`EMAIL_ENABLED` is False (the default in development), emails are logged instead
-of sent, so you can develop without a mail server and read the verification link
-straight from the console.
 """
 
 import logging
