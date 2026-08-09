@@ -25,3 +25,13 @@ class ProcessedImagePublic(BaseModel):
     output_url: str
     media_type: Literal["image", "video"]
     created_at: datetime
+    is_favorite: bool = False
+
+class FavoriteImagePublic(BaseModel):
+    """A bookmark on one of the user's own creations (see FavoriteImage)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    image_id: int
+    created_at: datetime

@@ -35,3 +35,6 @@ class User(Base):
     favorites: Mapped[list["FavoriteFilter"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    favorite_images: Mapped[list["FavoriteImage"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )

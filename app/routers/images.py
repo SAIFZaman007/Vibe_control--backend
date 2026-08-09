@@ -1,15 +1,5 @@
 """
 Image routes (async) — the core product surface.
-
-  GET  /api/styles                    list available style presets
-  POST /api/images/stylize            upload an image + apply a style (AI)
-  GET  /api/images                    list the current user's creations
-  GET  /api/images/{id}               metadata for one creation
-  GET  /api/images/{id}/file          stream original/output (ownership checked)
-  DELETE /api/images/{id}             delete a creation and its files
-
-Files are streamed through ownership-checked endpoints rather than served as
-open static assets, so one user can never read another user's images.
 """
 
 from pathlib import Path
@@ -18,15 +8,17 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.deps import get_current_user
 from app.database import get_db
+from app.models.favorite_image import FavoriteImage
 from app.models.image import ProcessedImage
 from app.models.user import User
-from app.schemas.image import ProcessedImagePublic, StylePreset
+from app.schemas.image import FavoriteImagePublic, ProcessedImagePublic, StylePreset
 from app.services import storage, style_catalog
 from app.services.style_transfer import stylize_to_file
 from app.services.video_transfer import VideoProcessingError, stylize_video_to_file
@@ -50,7 +42,7 @@ def _is_video_filename(name: str) -> bool:
     return Path(name).suffix.lower() in _VIDEO_SUFFIXES
 
 
-def _to_public(img: ProcessedImage) -> dict:
+def _to_public(img: ProcessedImage, favorited_ids: frozenset[int] = frozenset()) -> dict:
     return {
         "id": img.id,
         "title": img.title,
@@ -59,6 +51,7 @@ def _to_public(img: ProcessedImage) -> dict:
         "output_url": f"/api/images/{img.id}/file?variant=output",
         "media_type": "video" if _is_video_filename(img.output_filename) else "image",
         "created_at": img.created_at,
+        "is_favorite": img.id in favorited_ids,
     }
 
 
@@ -169,6 +162,13 @@ async def stylize(
     return _to_public(record)
 
 
+async def _favorited_ids_for(user: User, db: AsyncSession) -> frozenset[int]:
+    result = await db.execute(
+        select(FavoriteImage.image_id).where(FavoriteImage.owner_id == user.id)
+    )
+    return frozenset(result.scalars().all())
+
+
 @router.get("/images", response_model=list[ProcessedImagePublic])
 async def list_images(
     current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
@@ -178,7 +178,8 @@ async def list_images(
         .where(ProcessedImage.owner_id == current_user.id)
         .order_by(ProcessedImage.created_at.desc())
     )
-    return [_to_public(i) for i in result.scalars().all()]
+    favorited_ids = await _favorited_ids_for(current_user, db)
+    return [_to_public(i, favorited_ids) for i in result.scalars().all()]
 
 
 async def _get_owned(image_id: int, user: User, db: AsyncSession) -> ProcessedImage:
@@ -194,7 +195,14 @@ async def get_image(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return _to_public(await _get_owned(image_id, current_user, db))
+    img = await _get_owned(image_id, current_user, db)
+    result = await db.execute(
+        select(FavoriteImage.id).where(
+            FavoriteImage.owner_id == current_user.id, FavoriteImage.image_id == img.id
+        )
+    )
+    is_fav = result.scalar_one_or_none() is not None
+    return _to_public(img, frozenset({img.id}) if is_fav else frozenset())
 
 
 @router.get("/images/{image_id}/file")
@@ -234,5 +242,56 @@ async def delete_image(
     img = await _get_owned(image_id, current_user, db)
     storage.safe_remove(storage.upload_path(img.original_filename))
     storage.safe_remove(storage.output_path(img.output_filename))
+    # Clean up any favorite row explicitly rather than relying on cascade:
+    # SQLite doesn't enforce ondelete="CASCADE" unless PRAGMA foreign_keys is
+    # turned on (it isn't, here), and img was fetched with a plain db.get()
+    # rather than an eager-loaded relationship, so an ORM-level cascade
+    # wouldn't reliably fire either. This keeps deletes correct on both
+    # SQLite (dev) and Postgres (prod) without depending on either.
+    await db.execute(sa_delete(FavoriteImage).where(FavoriteImage.image_id == img.id))
     await db.delete(img)
+    await db.commit()
+
+
+@router.post(
+    "/images/{image_id}/favorite",
+    response_model=FavoriteImagePublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def favorite_image(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bookmark one of the current user's own creations."""
+    img = await _get_owned(image_id, current_user, db)
+    fav = FavoriteImage(owner_id=current_user.id, image_id=img.id)
+    db.add(fav)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Already favorited."
+        )
+    await db.refresh(fav)
+    return fav
+
+
+@router.delete("/images/{image_id}/favorite", status_code=status.HTTP_204_NO_CONTENT)
+async def unfavorite_image(
+    image_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    img = await _get_owned(image_id, current_user, db)
+    result = await db.execute(
+        select(FavoriteImage).where(
+            FavoriteImage.owner_id == current_user.id, FavoriteImage.image_id == img.id
+        )
+    )
+    fav = result.scalar_one_or_none()
+    if fav is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not favorited.")
+    await db.delete(fav)
     await db.commit()

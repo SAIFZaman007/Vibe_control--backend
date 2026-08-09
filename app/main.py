@@ -1,10 +1,5 @@
 """
 Vibe Control — FastAPI application entry point.
-
-Run in development with:
-    uv run uvicorn app.main:app --reload
-
-Interactive API docs are available at /docs once running.
 """
 
 import logging
@@ -29,8 +24,8 @@ logger = logging.getLogger("vibe")
 async def lifespan(app: FastAPI):
     # --- startup ---
     logger.info("Starting %s (%s)", settings.APP_NAME, settings.ENVIRONMENT)
-    await init_db()  # async: create tables if they don't exist
-    style_catalog.ensure_style_assets()  # generate style thumbnails/refs once
+    await init_db()  
+    style_catalog.ensure_style_assets() 
     yield
     # --- shutdown ---
     logger.info("Shutting down %s", settings.APP_NAME)
@@ -39,16 +34,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
     version="1.0.0",
-    description="AI style-transfer studio — upload an image, apply a vibe, download the result.",
+    description="Style-transfer studio — upload an image, apply a vibe, download the result.",
     lifespan=lifespan,
 )
 
 # --- Error safeguard (added FIRST so it sits *inside* CORS) -----------------
-# If a route raises an unhandled exception, Starlette's default 500 response is
-# generated OUTSIDE the CORS middleware and therefore has no CORS headers — which
-# makes the browser report a real server error as a misleading "CORS policy"
-# error. Catching it here and returning a JSONResponse lets the response flow back
-# out through the CORS middleware, so errors are always debuggable from the client.
 @app.middleware("http")
 async def catch_unhandled_errors(request: Request, call_next):
     try:
@@ -61,10 +51,6 @@ async def catch_unhandled_errors(request: Request, call_next):
 
 
 # --- CORS (added LAST so it is the OUTERMOST middleware) --------------------
-# The frontend authenticates with a bearer token (not cookies), so credentials
-# aren't required. The CORS spec forbids combining `Access-Control-Allow-Origin: *`
-# with credentials, so when a wildcard origin is configured we disable credentials
-# to keep the wildcard valid. For production, list your exact frontend origin.
 _origins = settings.cors_origins
 _allow_all = "*" in _origins
 app.add_middleware(
