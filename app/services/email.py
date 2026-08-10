@@ -55,3 +55,30 @@ def send_otp_email(to: str, full_name: str, code: str) -> None:
       </p>
     </div>"""
     _send(to, subject, html_body, text_body)
+    
+def send_password_reset_email(to: str, full_name: str, reset_url: str) -> None:
+    """ Email a "forgot password" link."""
+    minutes = settings.PASSWORD_RESET_EXPIRE_MINUTES
+    subject = "Reset your Vibe Control password"
+    text_body = (
+        f"Hi {full_name},\n\n"
+        f"We received a request to reset your Vibe Control password. Open this link "
+        f"to choose a new one:\n{reset_url}\n\n"
+        f"It expires in {minutes} minutes. If you didn't request this, you can safely "
+        f"ignore this email — your password won't change."
+    )
+    html_body = f"""\
+    <div style="font-family:system-ui,Arial,sans-serif;max-width:480px;margin:auto;color:#14121A">
+      <h2 style="margin:0 0 4px">Reset your password</h2>
+      <p style="color:#6B7280;margin:0 0 24px">Hi {full_name}, click below to choose a new password.</p>
+      <a href="{reset_url}"
+         style="display:inline-block;background-image:linear-gradient(120deg,#7C3AED 0%,#DB2777 100%);
+                color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:12px">
+        Reset password
+      </a>
+      <p style="color:#6B7280;font-size:13px;margin-top:20px">
+        This link expires in {minutes} minutes. If you didn't request it, you can safely ignore this
+        email — your password will stay the same.
+      </p>
+    </div>"""
+    _send(to, subject, html_body, text_body)

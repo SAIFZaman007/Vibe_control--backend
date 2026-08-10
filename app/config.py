@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     OTP_EXPIRE_MINUTES: int = 10  # code validity window
     OTP_MAX_ATTEMPTS: int = 5  # wrong tries before the code is invalidated
     OTP_RESEND_COOLDOWN_SECONDS: int = 60  # min gap between "resend code" requests
+    
+    # --- Password reset (forgot-password email links) ---
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 30  # link validity window
+    PASSWORD_RESET_COOLDOWN_SECONDS: int = 60  # min gap between reset requests
 
     # --- CORS ---
     # Comma-separated list of allowed origins for the browser frontend.

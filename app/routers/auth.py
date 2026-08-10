@@ -7,8 +7,10 @@ Signup flow
 2. POST /api/auth/verify-otp      -> checks the code, verifies the account, returns a JWT
 3. POST /api/auth/resend-otp      -> re-sends a code (rate-limited)
 
-Login requires a verified email. Because access tokens are only issued after
-verification, any bearer token in the system belongs to a verified user.
+Forgot password flow
+---------------------
+4. POST /api/auth/forgot-password -> emails a reset link if the account exists
+5. POST /api/auth/reset-password  -> consumes the link's token, sets a new password
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,9 +22,11 @@ from app.core import security
 from app.database import get_db
 from app.models.user import User
 from app.schemas.otp import MessageResponse, OTPResend, OTPVerify, RegisterResponse
+from app.schemas.password_reset import ForgotPasswordRequest, ResetPasswordConfirm
 from app.schemas.token import Token
 from app.schemas.user import UserCreate
 from app.services import otp as otp_service
+from app.services import password_reset as password_reset_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -124,3 +128,23 @@ async def login(
         )
 
     return Token(access_token=security.create_access_token(user.id))
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Always responds identically — never reveals whether the email exists."""
+    user = await _get_user_by_email(db, payload.email)
+    if user is not None and user.is_active:
+        try:
+            await password_reset_service.request_password_reset(db, user)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                raise
+    return MessageResponse(
+        message="If an account exists for that email, we've sent a reset link."
+    )
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(payload: ResetPasswordConfirm, db: AsyncSession = Depends(get_db)):
+    await password_reset_service.reset_password(db, payload.token, payload.new_password)
